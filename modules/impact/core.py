@@ -173,12 +173,14 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
         print(f"Detailer: segment skip (enough big)")
         return None, None
 
-    if guide_size_for_bbox:  # == "bbox"
-        # Scale up based on the smaller dimension between width and height.
-        upscale = guide_size / min(bbox_w, bbox_h)
-    else:
-        # for cropped_size
-        upscale = guide_size / min(w, h)
+    # if guide_size_for_bbox:  # == "bbox"
+    #     # Scale up based on the smaller dimension between width and height.
+    #     upscale = guide_size / min(bbox_w, bbox_h)
+    # else:
+    #     # for cropped_size
+    #     upscale = guide_size / min(w, h)
+
+    upscale = guide_size / min(w, h)
 
     new_w = int(w * upscale)
     new_h = int(h * upscale)
