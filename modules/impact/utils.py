@@ -414,30 +414,49 @@ def normalize_region(limit, startp, size):
 
 
 def make_crop_region(w, h, bbox, crop_factor, crop_min_size=None):
-    x1 = bbox[0]
-    y1 = bbox[1]
-    x2 = bbox[2]
-    y2 = bbox[3]
+    x1, y1, x2, y2 = bbox
 
+    # 计算边界框的宽度和高度
     bbox_w = x2 - x1
     bbox_h = y2 - y1
 
-    crop_w = bbox_w * crop_factor
-    crop_h = bbox_h * crop_factor
+    # 取边界框的长和宽中的最大值，并乘以裁剪因子，得到裁剪区域的尺寸
+    crop_size = max(bbox_w, bbox_h) * crop_factor
 
+    # 如果设置了最小裁剪尺寸，则确保不小于这个值
     if crop_min_size is not None:
-        crop_w = max(crop_min_size, crop_w)
-        crop_h = max(crop_min_size, crop_h)
+        crop_size = max(crop_min_size, crop_size)
 
-    kernel_x = x1 + bbox_w / 2
-    kernel_y = y1 + bbox_h / 2
+    # 计算边界框的中心点
+    center_x = x1 + bbox_w / 2
+    center_y = y1 + bbox_h / 2
 
-    new_x1 = int(kernel_x - crop_w / 2)
-    new_y1 = int(kernel_y - crop_h / 2)
+    # 计算新的裁剪区域的坐标
+    new_x1 = int(center_x - crop_size / 2)
+    new_y1 = int(center_y - crop_size / 2)
+    new_x2 = int(center_x + crop_size / 2)
+    new_y2 = int(center_y + crop_size / 2)
 
-    # make sure position in (w,h)
-    new_x1, new_x2 = normalize_region(w, new_x1, crop_w)
-    new_y1, new_y2 = normalize_region(h, new_y1, crop_h)
+    # 确保新的裁剪区域不超出图像边界
+    new_x1, new_x2 = normalize_region(w, new_x1, new_x2 - new_x1)
+    new_y1, new_y2 = normalize_region(h, new_y1, new_y2 - new_y1)
+
+    # 确保裁剪区域是正方形
+    # 裁剪区域可能因为靠近图像边缘而不是正方形，下面的代码将其调整为正方形
+    crop_width = new_x2 - new_x1
+    crop_height = new_y2 - new_y1
+    if crop_width > crop_height:
+        diff = crop_width - crop_height
+        new_y1 -= diff // 2
+        new_y2 = new_y1 + crop_width
+    else:
+        diff = crop_height - crop_width
+        new_x1 -= diff // 2
+        new_x2 = new_x1 + crop_height
+
+    # 再次确保裁剪区域不超出图像边界
+    new_x1, new_x2 = normalize_region(w, new_x1, new_x2 - new_x1)
+    new_y1, new_y2 = normalize_region(h, new_y1, new_y2 - new_y1)
 
     return [new_x1, new_y1, new_x2, new_y2]
 

@@ -184,13 +184,13 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
     new_h = int(h * upscale)
 
     # safeguard
-    if 'aitemplate_keep_loaded' in model.model_options:
-        max_size = min(4096, max_size)
-
-    if new_w > max_size or new_h > max_size:
-        upscale *= max_size / max(new_w, new_h)
-        new_w = int(w * upscale)
-        new_h = int(h * upscale)
+    # if 'aitemplate_keep_loaded' in model.model_options:
+    #     max_size = min(4096, max_size)
+    #
+    # if new_w > max_size or new_h > max_size:
+    #     upscale *= max_size / max(new_w, new_h)
+    #     new_w = int(w * upscale)
+    #     new_h = int(h * upscale)
 
     if not force_inpaint:
         if upscale <= 1.0:
