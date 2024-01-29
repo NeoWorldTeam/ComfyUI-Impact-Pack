@@ -220,7 +220,7 @@ class DetailerForEach:
         else:
             ordered_segs = segs[1]
 
-        for i, seg in enumerate(ordered_segs):
+        for i, seg in enumerate(ordered_segs[:3]):
             cropped_image = seg.cropped_image if seg.cropped_image is not None \
                                               else crop_ndarray4(image.numpy(), seg.crop_region)
             cropped_image = to_tensor(cropped_image)
