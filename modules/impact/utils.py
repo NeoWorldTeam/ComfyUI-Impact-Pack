@@ -9,6 +9,18 @@ from PIL import Image, ImageFilter
 from scipy.ndimage import zoom
 import comfy
 
+
+class TensorBatchBuilder:
+    def __init__(self):
+        self.tensor = None
+
+    def concat(self, new_tensor):
+        if self.tensor is None:
+            self.tensor = new_tensor
+        else:
+            self.tensor = torch.concat((self.tensor, new_tensor), dim=0)
+
+
 def tensor_convert_rgba(image, prefer_copy=True):
     """Assumes NHWC format tensor with 1, 3 or 4 channels."""
     _tensor_check_image(image)
@@ -68,9 +80,16 @@ LANCZOS = (Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.L
 def tensor_resize(image, w: int, h: int):
     _tensor_check_image(image)
     if image.shape[3] >= 3:
-        image = tensor2pil(image)
-        scaled_image = image.resize((w, h), resample=LANCZOS)
-        return pil2tensor(scaled_image)
+        scaled_images = TensorBatchBuilder()
+        for single_image in image:
+            single_image = single_image.unsqueeze(0)
+            single_pil = tensor2pil(single_image)
+            scaled_pil = single_pil.resize((w, h), resample=LANCZOS)
+
+            single_image = pil2tensor(scaled_pil)
+            scaled_images.concat(single_image)
+
+        return scaled_images.tensor
     else:
         return general_tensor_resize(image, w, h)
 
@@ -495,9 +514,16 @@ def to_latent_image(pixels, vae):
     y = pixels.shape[2]
     if pixels.shape[1] != x or pixels.shape[2] != y:
         pixels = pixels[:, :x, :y, :]
-    pixels = nodes.VAEEncode.vae_encode_crop_pixels(pixels)
-    t = vae.encode(pixels[:, :, :, :3])
-    return {"samples": t}
+
+    vae_encode = nodes.VAEEncode()
+    if hasattr(nodes.VAEEncode, "vae_encode_crop_pixels"):
+        # backward compatibility
+        print(f"[Impact Pack] ComfyUI is outdated.")
+        pixels = nodes.VAEEncode.vae_encode_crop_pixels(pixels)
+        t = vae.encode(pixels[:, :, :, :3])
+        return {"samples": t}
+
+    return vae_encode.encode(vae, pixels)[0]
 
 
 def empty_pil_tensor(w=64, h=64):

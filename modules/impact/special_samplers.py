@@ -67,8 +67,12 @@ class KSamplerAdvancedProvider:
                                 "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                                 "sampler_name": (comfy.samplers.KSampler.SAMPLERS, ),
                                 "scheduler": (comfy.samplers.KSampler.SCHEDULERS, ),
+                                "sigma_factor": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
                                 "basic_pipe": ("BASIC_PIPE", )
                              },
+                "optional": {
+                                "sampler_opt": ("SAMPLER", )
+                            }
                 }
 
     RETURN_TYPES = ("KSAMPLER_ADVANCED",)
@@ -76,9 +80,9 @@ class KSamplerAdvancedProvider:
 
     CATEGORY = "ImpactPack/Sampler"
 
-    def doit(self, cfg, sampler_name, scheduler, basic_pipe):
+    def doit(self, cfg, sampler_name, scheduler, basic_pipe, sigma_factor=1.0, sampler_opt=None):
         model, _, _, positive, negative = basic_pipe
-        sampler = KSamplerAdvancedWrapper(model, cfg, sampler_name, scheduler, positive, negative)
+        sampler = KSamplerAdvancedWrapper(model, cfg, sampler_name, scheduler, positive, negative, sampler_opt=sampler_opt, sigma_factor=sigma_factor)
         return (sampler, )
 
 
@@ -248,7 +252,7 @@ class ConcatConditionings:
     RETURN_TYPES = ("CONDITIONING", )
     FUNCTION = "doit"
 
-    CATEGORY = "ImpactPack/__for_testing"
+    CATEGORY = "ImpactPack/Util"
 
     def doit(self, **kwargs):
         conditioning_to = list(kwargs.values())[0]

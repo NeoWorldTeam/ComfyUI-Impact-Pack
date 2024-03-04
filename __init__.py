@@ -176,10 +176,12 @@ NODE_CLASS_MAPPINGS = {
 
     "PixelKSampleHookCombine": PixelKSampleHookCombine,
     "DenoiseScheduleHookProvider": DenoiseScheduleHookProvider,
+    "StepsScheduleHookProvider": StepsScheduleHookProvider,
     "CfgScheduleHookProvider": CfgScheduleHookProvider,
     "NoiseInjectionHookProvider": NoiseInjectionHookProvider,
     "UnsamplerHookProvider": UnsamplerHookProvider,
     "CoreMLDetailerHookProvider": CoreMLDetailerHookProvider,
+    "PreviewDetailerHookProvider": PreviewDetailerHookProvider,
 
     "DetailerHookCombine": DetailerHookCombine,
     "NoiseInjectionDetailerHookProvider": NoiseInjectionDetailerHookProvider,
@@ -215,6 +217,7 @@ NODE_CLASS_MAPPINGS = {
     "ImpactControlNetApplySEGS": ControlNetApplySEGS,
     "ImpactControlNetApplyAdvancedSEGS": ControlNetApplyAdvancedSEGS,
     "ImpactControlNetClearSEGS": ControlNetClearSEGS,
+    "ImpactIPAdapterApplySEGS": IPAdapterApplySEGS,
 
     "ImpactDecomposeSEGS": DecomposeSEGS,
     "ImpactAssembleSEGS": AssembleSEGS,
@@ -226,6 +229,8 @@ NODE_CLASS_MAPPINGS = {
     "ImpactDilateMaskInSEGS": DilateMaskInSEGS,
     "ImpactGaussianBlurMaskInSEGS": GaussianBlurMaskInSEGS,
     "ImpactScaleBy_BBOX_SEG_ELT": SEG_ELT_BBOX_ScaleBy,
+    "ImpactFrom_SEG_ELT_bbox": From_SEG_ELT_bbox,
+    "ImpactFrom_SEG_ELT_crop_region": From_SEG_ELT_crop_region,
 
     "BboxDetectorCombined_v2": BboxDetectorCombined,
     "SegmDetectorCombined_v2": SegmDetectorCombined,
@@ -284,6 +289,7 @@ NODE_CLASS_MAPPINGS = {
     "ImpactCombineConditionings": CombineConditionings,
     "ImpactConcatConditionings": ConcatConditionings,
 
+    "ImpactSEGSLabelAssign": SEGSLabelAssign,
     "ImpactSEGSLabelFilter": SEGSLabelFilter,
     "ImpactSEGSRangeFilter": SEGSRangeFilter,
     "ImpactSEGSOrderedFilter": SEGSOrderedFilter,
@@ -291,6 +297,9 @@ NODE_CLASS_MAPPINGS = {
     "ImpactCompare": ImpactCompare,
     "ImpactConditionalBranch": ImpactConditionalBranch,
     "ImpactConditionalBranchSelMode": ImpactConditionalBranchSelMode,
+    "ImpactIfNone": ImpactIfNone,
+    "ImpactConvertDataType": ImpactConvertDataType,
+    "ImpactLogicalOperators": ImpactLogicalOperators,
     "ImpactInt": ImpactInt,
     "ImpactFloat": ImpactFloat,
     "ImpactValueSender": ImpactValueSender,
@@ -333,6 +342,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactSimpleDetectorSEGSPipe": "Simple Detector (SEGS/pipe)",
     "ImpactControlNetApplySEGS": "ControlNetApply (SEGS)",
     "ImpactControlNetApplyAdvancedSEGS": "ControlNetApplyAdvanced (SEGS)",
+    "ImpactIPAdapterApplySEGS": "IPAdapterApply (SEGS)",
 
     "BboxDetectorCombined_v2": "BBOX Detector (combined)",
     "SegmDetectorCombined_v2": "SEGM Detector (combined)",
@@ -380,6 +390,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 
     "ImpactKSamplerBasicPipe": "KSampler (pipe)",
     "ImpactKSamplerAdvancedBasicPipe": "KSampler (Advanced/pipe)",
+    "ImpactSEGSLabelAssign": "SEGS Assign (label)",
     "ImpactSEGSLabelFilter": "SEGS Filter (label)",
     "ImpactSEGSRangeFilter": "SEGS Filter (range)",
     "ImpactSEGSOrderedFilter": "SEGS Filter (ordered)",
@@ -393,6 +404,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImpactAssembleSEGS": "Assemble (SEGS)",
     "ImpactFrom_SEG_ELT": "From SEG_ELT",
     "ImpactEdit_SEG_ELT": "Edit SEG_ELT",
+    "ImpactFrom_SEG_ELT_bbox": "From SEG_ELT bbox",
+    "ImpactFrom_SEG_ELT_crop_region": "From SEG_ELT crop_region",
     "ImpactDilate_Mask_SEG_ELT": "Dilate Mask (SEG_ELT)",
     "ImpactScaleBy_BBOX_SEG_ELT": "ScaleBy BBOX (SEG_ELT)",
     "ImpactDilateMask": "Dilate Mask",

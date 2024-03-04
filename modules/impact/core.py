@@ -1,3 +1,4 @@
+import torch
 from segment_anything import SamPredictor
 
 from impact.utils import *
@@ -73,6 +74,12 @@ class REGIONAL_PROMPT:
         self.sampler = sampler
         self.mask_erosion = None
         self.erosion_factor = None
+
+    def clone_with_sampler(self, sampler):
+        rp = REGIONAL_PROMPT(self.mask, sampler)
+        rp.mask_erosion = self.mask_erosion
+        rp.erosion_factor = self.erosion_factor
+        return rp
 
     def get_mask_erosion(self, factor):
         if self.mask_erosion is None or self.erosion_factor != factor:
@@ -220,6 +227,8 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
     cnet_pils = None
     if control_net_wrapper is not None:
         positive, negative, cnet_pils = control_net_wrapper.apply(positive, negative, upscaled_image, noise_mask)
+        model, cnet_pils2 = control_net_wrapper.doit_ipadapter(model)
+        cnet_pils.extend(cnet_pils2)
 
     # prepare mask
     if noise_mask is not None and inpaint_model:
@@ -277,7 +286,7 @@ def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, g
                                    wildcard_opt=None, wildcard_opt_concat_mode=None,
                                    detailer_hook=None,
                                    refiner_ratio=None, refiner_model=None, refiner_clip=None, refiner_positive=None,
-                                   refiner_negative=None, inpaint_model=False, noise_mask_feather=0):
+                                   refiner_negative=None, control_net_wrapper=None, inpaint_model=False, noise_mask_feather=0):
     if noise_mask is not None:
         noise_mask = utils.tensor_gaussian_blur_mask(noise_mask, noise_mask_feather)
         noise_mask = noise_mask.squeeze(3)
@@ -363,6 +372,10 @@ def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, g
         else:
             latent_frames = torch.concat((latent_frames, samples), dim=0)
 
+    cnet_images = None
+    if control_net_wrapper is not None:
+        positive, negative, cnet_images = control_net_wrapper.apply(positive, negative, torch.from_numpy(image_frames), noise_mask, use_acn=True)
+
     if len(upscaled_mask) != len(image_frames) and len(upscaled_mask) > 1:
         print(f"[Impact Pack] WARN: DetailerForAnimateDiff - The number of the mask frames({len(upscaled_mask)}) and the image frames({len(image_frames)}) are different. Combine the mask frames and apply.")
         combined_mask = upscaled_mask[0].to(torch.uint8)
@@ -406,7 +419,7 @@ def enhance_detail_for_animatediff(image_frames, model, clip, vae, guide_size, g
 
     refined_image_frames = nodes.ImageScale().upscale(image=refined_image_frames, upscale_method='lanczos', width=w, height=h, crop='disabled')[0]
 
-    return refined_image_frames
+    return refined_image_frames, cnet_images
 
 
 def composite_to(dest_latent, crop_region, src_latent):
@@ -1482,9 +1495,57 @@ class PixelKSampleUpscaler:
         return refined_latent
 
 
+class IPAdapterWrapper:
+    def __init__(self, ipadapter_pipe, weight, noise, weight_type, start_at, end_at, unfold_batch, faceid_v2, weight_v2, reference_image, prev_control_net=None):
+        self.reference_image = reference_image
+        self.ipadapter_pipe = ipadapter_pipe
+        self.weight = weight
+        self.weight_type = weight_type
+        self.noise = noise
+        self.start_at = start_at
+        self.end_at = end_at
+        self.unfold_batch = unfold_batch
+        self.prev_control_net = prev_control_net
+        self.faceid_v2 = faceid_v2
+        self.weight_v2 = weight_v2
+        self.image = reference_image
+
+    # name 'apply_ipadapter' isn't allowed
+    def doit_ipadapter(self, model):
+        cnet_image_list = [self.image]
+        prev_cnet_images = []
+
+        if 'IPAdapterApply' not in nodes.NODE_CLASS_MAPPINGS:
+            utils.try_install_custom_node('https://github.com/cubiq/ComfyUI_IPAdapter_plus',
+                                          "To use 'IPAdapterApplySEGS' node, 'ComfyUI IPAdapter Plus' extension is required.")
+            raise Exception(f"[ERROR] To use IPAdapterApplySEGS, you need to install 'ComfyUI IPAdapter Plus'")
+
+        obj = nodes.NODE_CLASS_MAPPINGS['IPAdapterApply']
+
+        ipadapter, _, clip_vision, insightface, lora_loader = self.ipadapter_pipe
+        model = lora_loader(model)
+
+        if self.prev_control_net is not None:
+            model, prev_cnet_images = self.prev_control_net.doit_ipadapter(model)
+
+        model = obj().apply_ipadapter(ipadapter, model, self.weight, clip_vision=clip_vision, image=self.image,
+                                      embeds=None, weight_type=self.weight_type, noise=self.noise,
+                                      attn_mask=None, start_at=self.start_at, end_at=self.end_at,
+                                      unfold_batch=self.unfold_batch, insightface=insightface, faceid_v2=self.faceid_v2, weight_v2=self.weight_v2)[0]
+
+        cnet_image_list.extend(prev_cnet_images)
+
+        return model, cnet_image_list
+
+    def apply(self, positive, negative, image, mask=None, use_acn=False):
+        if self.prev_control_net is not None:
+            return self.prev_control_net.apply(positive, negative, image, mask, use_acn=use_acn)
+        else:
+            return positive, negative, []
+
+
 class ControlNetWrapper:
-    def __init__(self, control_net, strength, preprocessor, prev_control_net=None,
-                 original_size=None, crop_region=None, control_image=None):
+    def __init__(self, control_net, strength, preprocessor, prev_control_net=None, original_size=None, crop_region=None, control_image=None):
         self.control_net = control_net
         self.strength = strength
         self.preprocessor = preprocessor
@@ -1496,26 +1557,42 @@ class ControlNetWrapper:
         else:
             self.control_image = None
 
-    def apply(self, positive, negative, image, mask=None):
-        cnet_pils = []
-        prev_cnet_pils = []
+    def apply(self, positive, negative, image, mask=None, use_acn=False):
+        cnet_image_list = []
+        prev_cnet_images = []
 
         if self.prev_control_net is not None:
-            positive, negative, prev_cnet_pils = self.prev_control_net.apply(positive, negative, image, mask)
+            positive, negative, prev_cnet_images = self.prev_control_net.apply(positive, negative, image, mask, use_acn=use_acn)
 
         if self.control_image is not None:
-            cnet_pil = self.control_image
+            cnet_image = self.control_image
         elif self.preprocessor is not None:
-            cnet_pil = self.preprocessor.apply(image, mask)
+            cnet_image = self.preprocessor.apply(image, mask)
         else:
-            cnet_pil = image
+            cnet_image = image
 
-        cnet_pils.extend(prev_cnet_pils)
-        cnet_pils.append(cnet_pil)
+        cnet_image_list.extend(prev_cnet_images)
+        cnet_image_list.append(cnet_image)
 
-        positive = nodes.ControlNetApply().apply_controlnet(positive, self.control_net, cnet_pil, self.strength)[0]
+        if use_acn:
+            if "ACN_AdvancedControlNetApply" in nodes.NODE_CLASS_MAPPINGS:
+                acn = nodes.NODE_CLASS_MAPPINGS['ACN_AdvancedControlNetApply']()
+                positive, negative, _ = acn.apply_controlnet(positive=positive, negative=negative, control_net=self.control_net, image=cnet_image,
+                                                             strength=self.strength, start_percent=0.0, end_percent=1.0)
+            else:
+                utils.try_install_custom_node('https://github.com/BlenderNeko/ComfyUI_TiledKSampler',
+                                              "To use 'ControlNetWrapper' for AnimateDiff, 'ComfyUI-Advanced-ControlNet' extension is required.")
+                raise Exception("'ACN_AdvancedControlNetApply' node isn't installed.")
+        else:
+            positive = nodes.ControlNetApply().apply_controlnet(positive, self.control_net, cnet_image, self.strength)[0]
 
-        return positive, negative, cnet_pils
+        return positive, negative, cnet_image_list
+
+    def doit_ipadapter(self, model):
+        if self.prev_control_net is not None:
+            return self.prev_control_net.doit_ipadapter(model)
+        else:
+            return model, []
 
 
 class ControlNetAdvancedWrapper:
@@ -1534,26 +1611,42 @@ class ControlNetAdvancedWrapper:
         else:
             self.control_image = None
 
-    def apply(self, positive, negative, image, mask=None):
-        cnet_pils = []
-        prev_cnet_pils = []
+    def doit_ipadapter(self, model):
+        if self.prev_control_net is not None:
+            return self.prev_control_net.doit_ipadapter(model)
+        else:
+            return model, []
+
+    def apply(self, positive, negative, image, mask=None, use_acn=False):
+        cnet_image_list = []
+        prev_cnet_images = []
 
         if self.prev_control_net is not None:
-            positive, negative, prev_cnet_pils = self.prev_control_net.apply(positive, negative, image, mask)
+            positive, negative, prev_cnet_images = self.prev_control_net.apply(positive, negative, image, mask)
 
         if self.control_image is not None:
-            cnet_pil = self.control_image
+            cnet_image = self.control_image
         elif self.preprocessor is not None:
-            cnet_pil = self.preprocessor.apply(image, mask)
+            cnet_image = self.preprocessor.apply(image, mask)
         else:
-            cnet_pil = image
+            cnet_image = image
 
-        cnet_pils.extend(prev_cnet_pils)
-        cnet_pils.append(cnet_pil)
+        cnet_image_list.extend(prev_cnet_images)
+        cnet_image_list.append(cnet_image)
 
-        conditioning = nodes.ControlNetApplyAdvanced().apply_controlnet(positive, negative, self.control_net, cnet_pil, self.strength, self.start_percent, self.end_percent)
+        if use_acn:
+            if "ACN_AdvancedControlNetApply" in nodes.NODE_CLASS_MAPPINGS:
+                acn = nodes.NODE_CLASS_MAPPINGS['ACN_AdvancedControlNetApply']()
+                positive, negative, _ = acn.apply_controlnet(positive=positive, negative=negative, control_net=self.control_net, image=cnet_image,
+                                                             strength=self.strength, start_percent=self.start_percent, end_percent=self.end_percent)
+            else:
+                utils.try_install_custom_node('https://github.com/BlenderNeko/ComfyUI_TiledKSampler',
+                                              "To use 'ControlNetAdvancedWrapper' for AnimateDiff, 'ComfyUI-Advanced-ControlNet' extension is required.")
+                raise Exception("'ACN_AdvancedControlNetApply' node isn't installed.")
+        else:
+            positive, negative = nodes.ControlNetApplyAdvanced().apply_controlnet(positive, negative, self.control_net, cnet_image, self.strength, self.start_percent, self.end_percent)
 
-        return conditioning[0], conditioning[1], cnet_pils
+        return positive, negative, cnet_image_list
 
 
 # REQUIREMENTS: BlenderNeko/ComfyUI_TiledKSampler
