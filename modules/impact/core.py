@@ -19,6 +19,11 @@ from impact import utils
 from impact import impact_sampling
 from concurrent.futures import ThreadPoolExecutor
 
+try:
+    from comfy_extras import nodes_differential_diffusion
+except Exception:
+    print(f"[Impact Pack] ComfyUI is an outdated version. The DifferentialDiffusion feature will be disabled.")
+
 
 SEG = namedtuple("SEG",
                  ['cropped_image', 'cropped_mask', 'confidence', 'crop_region', 'bbox', 'label', 'control_net_wrapper'],
@@ -160,6 +165,12 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
     if noise_mask is not None:
         noise_mask = utils.tensor_gaussian_blur_mask(noise_mask, noise_mask_feather)
         noise_mask = noise_mask.squeeze(3)
+
+        if noise_mask_feather > 0:
+            try:
+                model = nodes_differential_diffusion.DifferentialDiffusion().apply(model)[0]
+            except Exception:
+                print(f"[Impact Pack] ComfyUI is an outdated version. The DifferentialDiffusion feature will be disabled.")
 
     if wildcard_opt is not None and wildcard_opt != "":
         model, _, wildcard_positive = wildcards.process_with_loras(wildcard_opt, model, clip)
@@ -1306,6 +1317,7 @@ class TwoSamplersForMaskUpscaler:
         self.hook_full = hook_full_opt
         self.use_tiled_vae = use_tiled_vae
         self.tile_size = tile_size
+        self.is_tiled = False
         self.vae = vae
 
     def upscale(self, step_info, samples, upscale_factor, save_temp_prefix=None):
@@ -1819,7 +1831,7 @@ def random_mask_raw(mask, bbox, factor):
     w = x2 - x1
     h = y2 - y1
 
-    factor = int(min(w, h) * factor / 4)
+    factor = max(6, int(min(w, h) * factor / 4))
 
     def draw_random_circle(center, radius):
         i, j = center
