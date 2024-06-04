@@ -85,7 +85,7 @@ class SAMLoader:
         models = [x for x in folder_paths.get_filename_list("sams") if 'hq' not in x]
         return {
             "required": {
-                "model_name": (models, ),
+                "model_name": (models + ['ESAM'], ),
                 "device_mode": (["AUTO", "Prefer GPU", "CPU"],),
             }
         }
@@ -96,6 +96,26 @@ class SAMLoader:
     CATEGORY = "ImpactPack"
 
     def load_model(self, model_name, device_mode="auto"):
+        if model_name == 'ESAM':
+            if 'ESAM_ModelLoader_Zho' not in nodes.NODE_CLASS_MAPPINGS:
+                try_install_custom_node('https://github.com/ZHO-ZHO-ZHO/ComfyUI-YoloWorld-EfficientSAM',
+                                        "To use 'ESAM' model, 'ComfyUI-YoloWorld-EfficientSAM' extension is required.")
+                raise Exception("'ComfyUI-YoloWorld-EfficientSAM' node isn't installed.")
+
+            esam_loader = nodes.NODE_CLASS_MAPPINGS['ESAM_ModelLoader_Zho']()
+
+            if device_mode == 'CPU':
+                esam = esam_loader.load_esam_model('CPU')[0]
+            else:
+                device_mode = 'CUDA'
+                esam = esam_loader.load_esam_model('CUDA')[0]
+
+            sam_obj = core.ESAMWrapper(esam, device_mode)
+            esam.sam_wrapper = sam_obj
+            
+            print(f"Loads EfficientSAM model: (device:{device_mode})")
+            return (esam, )
+
         modelname = folder_paths.get_full_path("sams", model_name)
 
         if 'vit_h' in model_name:
@@ -107,15 +127,18 @@ class SAMLoader:
 
         sam = sam_model_registry[model_kind](checkpoint=modelname)
         size = os.path.getsize(modelname)
-        sam.safe_to = core.SafeToGPU(size)
+        safe_to = core.SafeToGPU(size)
 
         # Unless user explicitly wants to use CPU, we use GPU
         device = comfy.model_management.get_torch_device() if device_mode == "Prefer GPU" else "CPU"
 
         if device_mode == "Prefer GPU":
-            sam.safe_to.to_device(sam, device)
+            safe_to.to_device(sam, device)
 
-        sam.is_auto_mode = device_mode == "AUTO"
+        is_auto_mode = device_mode == "AUTO"
+
+        sam_obj = core.SAMWrapper(sam, is_auto_mode=is_auto_mode, safe_to_gpu=safe_to)
+        sam.sam_wrapper = sam_obj
 
         print(f"Loads SAM model: {modelname} (device:{device_mode})")
         return (sam, )
@@ -162,7 +185,7 @@ class DetailerForEach:
                     "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                     "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
-                    "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                    "scheduler": (core.SCHEDULERS,),
                     "positive": ("CONDITIONING",),
                     "negative": ("CONDITIONING",),
                     "denoise": ("FLOAT", {"default": 0.5, "min": 0.0001, "max": 1.0, "step": 0.01}),
@@ -221,8 +244,7 @@ class DetailerForEach:
             ordered_segs = segs[1]
 
         for i, seg in enumerate(ordered_segs):
-            cropped_image = seg.cropped_image if seg.cropped_image is not None \
-                                              else crop_ndarray4(image.numpy(), seg.crop_region)
+            cropped_image = crop_ndarray4(image.cpu().numpy(), seg.crop_region)  # Never use seg.cropped_image to handle overlapping area
             cropped_image = to_tensor(cropped_image)
             mask = to_tensor(seg.cropped_mask)
             mask = tensor_gaussian_blur_mask(mask, feather)
@@ -246,9 +268,25 @@ class DetailerForEach:
 
             seg_seed = seed + i if seg_seed is None else seg_seed
 
+            cropped_positive = [
+                [condition, {
+                    k: core.crop_condition_mask(v, image, seg.crop_region) if k == "mask" else v
+                    for k, v in details.items()
+                }]
+                for condition, details in positive
+            ]
+
+            cropped_negative = [
+                [condition, {
+                    k: core.crop_condition_mask(v, image, seg.crop_region) if k == "mask" else v
+                    for k, v in details.items()
+                }]
+                for condition, details in negative
+            ]
+
             enhanced_image, cnet_pils = core.enhance_detail(cropped_image, model, clip, vae, guide_size, guide_size_for_bbox, max_size,
                                                             seg.bbox, seg_seed, steps, cfg, sampler_name, scheduler,
-                                                            positive, negative, denoise, cropped_mask, force_inpaint,
+                                                            cropped_positive, cropped_negative, denoise, cropped_mask, force_inpaint,
                                                             wildcard_opt=wildcard_item, wildcard_opt_concat_mode=wildcard_concat_mode,
                                                             detailer_hook=detailer_hook,
                                                             refiner_ratio=refiner_ratio, refiner_model=refiner_model,
@@ -268,7 +306,7 @@ class DetailerForEach:
                 enhanced_list.append(enhanced_image)
 
                 if detailer_hook is not None:
-                    detailer_hook.post_paste(image)
+                    image = detailer_hook.post_paste(image)
 
             if not (enhanced_image is None):
                 # Convert enhanced_pil_alpha to RGBA mode
@@ -321,7 +359,7 @@ class DetailerForEachPipe:
                       "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                       "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                       "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
-                      "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                      "scheduler": (core.SCHEDULERS,),
                       "denoise": ("FLOAT", {"default": 0.5, "min": 0.0001, "max": 1.0, "step": 0.01}),
                       "feather": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                       "noise_mask": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
@@ -392,7 +430,7 @@ class FaceDetailer:
                      "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                      "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                      "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
-                     "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                     "scheduler": (core.SCHEDULERS,),
                      "positive": ("CONDITIONING",),
                      "negative": ("CONDITIONING",),
                      "denoise": ("FLOAT", {"default": 0.5, "min": 0.0001, "max": 1.0, "step": 0.01}),
@@ -587,6 +625,41 @@ class NoiseInjectionDetailerHookProvider:
             print("[ERROR] NoiseInjectionDetailerHookProvider: 'ComfyUI Noise' custom node isn't installed. You must install 'BlenderNeko/ComfyUI Noise' extension to use this node.")
             print(f"\t{e}")
             pass
+
+
+# class CustomNoiseDetailerHookProvider:
+#     @classmethod
+#     def INPUT_TYPES(s):
+#         return {"required": {
+#                     "noise": ("NOISE",)},
+#                 }
+#
+#     RETURN_TYPES = ("DETAILER_HOOK",)
+#     FUNCTION = "doit"
+#
+#     CATEGORY = "ImpactPack/Detailer"
+#
+#     def doit(self, noise):
+#         hook = hooks.CustomNoiseDetailerHookProvider(noise)
+#         return (hook, )
+
+
+class VariationNoiseDetailerHookProvider:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                     "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                     "strength": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01})}
+                }
+
+    RETURN_TYPES = ("DETAILER_HOOK",)
+    FUNCTION = "doit"
+
+    CATEGORY = "ImpactPack/Detailer"
+
+    def doit(self, seed, strength):
+        hook = hooks.VariationNoiseDetailerHookProvider(seed, strength)
+        return (hook, )
 
 
 class UnsamplerDetailerHookProvider:
@@ -868,6 +941,7 @@ class PixelTiledKSampleUpscalerProvider:
                 "optional": {
                         "upscale_model_opt": ("UPSCALE_MODEL", ),
                         "pk_hook_opt": ("PK_HOOK", ),
+                        "tile_cnet_opt": ("CONTROL_NET", ),
                     }
                 }
 
@@ -876,9 +950,9 @@ class PixelTiledKSampleUpscalerProvider:
 
     CATEGORY = "ImpactPack/Upscale"
 
-    def doit(self, scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt=None, pk_hook_opt=None):
+    def doit(self, scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt=None, pk_hook_opt=None, tile_cnet_opt=None):
         if "BNK_TiledKSampler" in nodes.NODE_CLASS_MAPPINGS:
-            upscaler = core.PixelTiledKSampleUpscaler(scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt, pk_hook_opt, tile_size=max(tile_width, tile_height))
+            upscaler = core.PixelTiledKSampleUpscaler(scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt, pk_hook_opt, tile_cnet_opt, tile_size=max(tile_width, tile_height))
             return (upscaler, )
         else:
             print("[ERROR] PixelTiledKSampleUpscalerProvider: ComfyUI_TiledKSampler custom node isn't installed. You must install BlenderNeko/ComfyUI_TiledKSampler extension to use this node.")
@@ -905,6 +979,7 @@ class PixelTiledKSampleUpscalerProviderPipe:
                 "optional": {
                         "upscale_model_opt": ("UPSCALE_MODEL", ),
                         "pk_hook_opt": ("PK_HOOK", ),
+                        "tile_cnet_opt": ("CONTROL_NET", ),
                     }
                 }
 
@@ -913,10 +988,10 @@ class PixelTiledKSampleUpscalerProviderPipe:
 
     CATEGORY = "ImpactPack/Upscale"
 
-    def doit(self, scale_method, seed, steps, cfg, sampler_name, scheduler, denoise, tile_width, tile_height, tiling_strategy, basic_pipe, upscale_model_opt=None, pk_hook_opt=None):
+    def doit(self, scale_method, seed, steps, cfg, sampler_name, scheduler, denoise, tile_width, tile_height, tiling_strategy, basic_pipe, upscale_model_opt=None, pk_hook_opt=None, tile_cnet_opt=None):
         if "BNK_TiledKSampler" in nodes.NODE_CLASS_MAPPINGS:
             model, _, vae, positive, negative = basic_pipe
-            upscaler = core.PixelTiledKSampleUpscaler(scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt, pk_hook_opt, tile_size=max(tile_width, tile_height))
+            upscaler = core.PixelTiledKSampleUpscaler(scale_method, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, denoise, tile_width, tile_height, tiling_strategy, upscale_model_opt, pk_hook_opt, tile_cnet_opt, tile_size=max(tile_width, tile_height))
             return (upscaler, )
         else:
             print("[ERROR] PixelTiledKSampleUpscalerProviderPipe: ComfyUI_TiledKSampler custom node isn't installed. You must install BlenderNeko/ComfyUI_TiledKSampler extension to use this node.")
@@ -935,7 +1010,7 @@ class PixelKSampleUpscalerProvider:
                     "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                     "sampler_name": (comfy.samplers.KSampler.SAMPLERS, ),
-                    "scheduler": (comfy.samplers.KSampler.SCHEDULERS, ),
+                    "scheduler": (core.SCHEDULERS, ),
                     "positive": ("CONDITIONING", ),
                     "negative": ("CONDITIONING", ),
                     "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
@@ -972,7 +1047,7 @@ class PixelKSampleUpscalerProviderPipe(PixelKSampleUpscalerProvider):
                     "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                     "sampler_name": (comfy.samplers.KSampler.SAMPLERS, ),
-                    "scheduler": (comfy.samplers.KSampler.SCHEDULERS, ),
+                    "scheduler": (core.SCHEDULERS, ),
                     "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                     "use_tiled_vae": ("BOOLEAN", {"default": False, "label_on": "enabled", "label_off": "disabled"}),
                     "basic_pipe": ("BASIC_PIPE",),
@@ -1204,7 +1279,7 @@ class FaceDetailerPipe:
                     "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                     "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
-                    "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                    "scheduler": (core.SCHEDULERS,),
                     "denoise": ("FLOAT", {"default": 0.5, "min": 0.0001, "max": 1.0, "step": 0.01}),
                     "feather": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
                     "noise_mask": ("BOOLEAN", {"default": True, "label_on": "enabled", "label_off": "disabled"}),
@@ -1303,7 +1378,7 @@ class MaskDetailerPipe:
                     "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                     "cfg": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}),
                     "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
-                    "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
+                    "scheduler": (core.SCHEDULERS,),
                     "denoise": ("FLOAT", {"default": 0.5, "min": 0.0001, "max": 1.0, "step": 0.01}),
 
                     "feather": ("INT", {"default": 5, "min": 0, "max": 100, "step": 1}),
@@ -1523,42 +1598,10 @@ class BitwiseAndMaskForEach:
     CATEGORY = "ImpactPack/Operation"
 
     def doit(self, base_segs, mask_segs):
+        mask = core.segs_to_combined_mask(mask_segs)
+        mask = make_3d_mask(mask)
 
-        result = []
-
-        for bseg in base_segs[1]:
-            cropped_mask1 = bseg.cropped_mask.copy()
-            crop_region1 = bseg.crop_region
-
-            for mseg in mask_segs[1]:
-                cropped_mask2 = mseg.cropped_mask
-                crop_region2 = mseg.crop_region
-
-                # compute the intersection of the two crop regions
-                intersect_region = (max(crop_region1[0], crop_region2[0]),
-                                    max(crop_region1[1], crop_region2[1]),
-                                    min(crop_region1[2], crop_region2[2]),
-                                    min(crop_region1[3], crop_region2[3]))
-
-                overlapped = False
-
-                # set all pixels in cropped_mask1 to 0 except for those that overlap with cropped_mask2
-                for i in range(intersect_region[0], intersect_region[2]):
-                    for j in range(intersect_region[1], intersect_region[3]):
-                        if cropped_mask1[j - crop_region1[1], i - crop_region1[0]] == 1 and \
-                                cropped_mask2[j - crop_region2[1], i - crop_region2[0]] == 1:
-                            # pixel overlaps with both masks, keep it as 1
-                            overlapped = True
-                            pass
-                        else:
-                            # pixel does not overlap with both masks, set it to 0
-                            cropped_mask1[j - crop_region1[1], i - crop_region1[0]] = 0
-
-                if overlapped:
-                    item = SEG(bseg.cropped_image, cropped_mask1, bseg.confidence, bseg.crop_region, bseg.bbox, bseg.label, None)
-                    result.append(item)
-
-        return ((base_segs[0], result),)
+        return SegsBitwiseAndMask().doit(base_segs, mask)
 
 
 class SubtractMaskForEach:
@@ -1576,44 +1619,9 @@ class SubtractMaskForEach:
     CATEGORY = "ImpactPack/Operation"
 
     def doit(self, base_segs, mask_segs):
-
-        result = []
-
-        for bseg in base_segs[1]:
-            cropped_mask1 = bseg.cropped_mask.copy()
-            crop_region1 = bseg.crop_region
-
-            for mseg in mask_segs[1]:
-                cropped_mask2 = mseg.cropped_mask
-                crop_region2 = mseg.crop_region
-
-                # compute the intersection of the two crop regions
-                intersect_region = (max(crop_region1[0], crop_region2[0]),
-                                    max(crop_region1[1], crop_region2[1]),
-                                    min(crop_region1[2], crop_region2[2]),
-                                    min(crop_region1[3], crop_region2[3]))
-
-                changed = False
-
-                # subtract operation
-                for i in range(intersect_region[0], intersect_region[2]):
-                    for j in range(intersect_region[1], intersect_region[3]):
-                        if cropped_mask1[j - crop_region1[1], i - crop_region1[0]] == 1 and \
-                                cropped_mask2[j - crop_region2[1], i - crop_region2[0]] == 1:
-                            # pixel overlaps with both masks, set it as 0
-                            changed = True
-                            cropped_mask1[j - crop_region1[1], i - crop_region1[0]] = 0
-                        else:
-                            # pixel does not overlap with both masks, don't care
-                            pass
-
-                if changed:
-                    item = SEG(bseg.cropped_image, cropped_mask1, bseg.confidence, bseg.crop_region, bseg.bbox, bseg.label, None)
-                    result.append(item)
-                else:
-                    result.append(base_segs)
-
-        return ((base_segs[0], result),)
+        mask = core.segs_to_combined_mask(mask_segs)
+        mask = make_3d_mask(mask)
+        return (core.segs_bitwise_subtract_mask(base_segs, mask), )
 
 
 class ToBinaryMask:
@@ -2073,7 +2081,7 @@ class ImpactWildcardProcessor:
         return impact.wildcards.process(**kwargs)
 
     def doit(self, *args, **kwargs):
-        populated_text = kwargs['populated_text']
+        populated_text = ImpactWildcardProcessor.process(text=kwargs['populated_text'], seed=kwargs['seed'])
         return (populated_text, )
 
 
@@ -2108,9 +2116,29 @@ class ImpactWildcardEncode:
 
     def doit(self, *args, **kwargs):
         populated = kwargs['populated_text']
-        model, clip, conditioning = impact.wildcards.process_with_loras(populated, kwargs['model'], kwargs['clip'])
-        return (model, clip, conditioning, populated)
+        processed = []
+        model, clip, conditioning = impact.wildcards.process_with_loras(wildcard_opt=populated, model=kwargs['model'], clip=kwargs['clip'], seed=kwargs['seed'], processed=processed)
+        return model, clip, conditioning, processed[0]
 
 
+class ImpactSchedulerAdapter:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"defaultInput": True,}),
+            "ays_scheduler": (['None', 'AYS SDXL', 'AYS SD1', 'AYS SVD'],),
+        }}
 
+    CATEGORY = "ImpactPack/Util"
+
+    RETURN_TYPES = (core.SCHEDULERS,)
+    RETURN_NAMES = ("scheduler",)
+
+    FUNCTION = "doit"
+
+    def doit(self, scheduler, ays_scheduler):
+        if ays_scheduler != 'None':
+            return (ays_scheduler,)
+
+        return (scheduler,)
 

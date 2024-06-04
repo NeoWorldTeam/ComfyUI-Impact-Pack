@@ -1,6 +1,7 @@
 from impact.utils import *
 from impact import impact_sampling
 from comfy import model_management
+from comfy.cli_args import args
 import nodes
 
 try:
@@ -17,7 +18,7 @@ except Exception:
 def upscale_with_model(upscale_model, image):
     device = model_management.get_torch_device()
     upscale_model.to(device)
-    in_img = image.movedim(-1,-3).to(device)
+    in_img = image.movedim(-1, -3).to(device)
     free_memory = model_management.get_free_memory(device)
 
     tile = 512
@@ -35,7 +36,6 @@ def upscale_with_model(upscale_model, image):
             if tile < 128:
                 raise e
 
-    upscale_model.cpu()
     s = torch.clamp(s.movedim(-3, -1), min=0, max=1.0)
     return s
 
@@ -99,10 +99,7 @@ def img2img_segs(image, model, clip, vae, seed, steps, cfg, sampler_name, schedu
         noise_mask = noise_mask.squeeze(3)
 
         if noise_mask_feather > 0:
-            try:
-                model = nodes_differential_diffusion.DifferentialDiffusion().apply(model)[0]
-            except Exception:
-                print(f"[Impact Pack] ComfyUI is an outdated version. The DifferentialDiffusion feature will be disabled.")
+            model = nodes_differential_diffusion.DifferentialDiffusion().apply(model)[0]
 
     if control_net_wrapper is not None:
         positive, negative, _ = control_net_wrapper.apply(positive, negative, image, noise_mask)

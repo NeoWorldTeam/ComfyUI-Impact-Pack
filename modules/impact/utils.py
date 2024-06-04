@@ -495,6 +495,17 @@ def crop_ndarray4(npimg, crop_region):
 crop_tensor4 = crop_ndarray4
 
 
+def crop_ndarray3(npimg, crop_region):
+    x1 = crop_region[0]
+    y1 = crop_region[1]
+    x2 = crop_region[2]
+    y2 = crop_region[3]
+
+    cropped = npimg[:, y1:y2, x1:x2]
+
+    return cropped
+
+
 def crop_ndarray2(npimg, crop_region):
     x1 = crop_region[0]
     y1 = crop_region[1]
@@ -517,12 +528,6 @@ def to_latent_image(pixels, vae):
         pixels = pixels[:, :x, :y, :]
 
     vae_encode = nodes.VAEEncode()
-    if hasattr(nodes.VAEEncode, "vae_encode_crop_pixels"):
-        # backward compatibility
-        print(f"[Impact Pack] ComfyUI is outdated.")
-        pixels = nodes.VAEEncode.vae_encode_crop_pixels(pixels)
-        t = vae.encode(pixels[:, :, :, :3])
-        return {"samples": t}
 
     return vae_encode.encode(vae, pixels)[0]
 
