@@ -243,59 +243,59 @@ try:
     def install():
         remove_olds()
 
-        subpack_install_script = os.path.join(subpack_path, "install.py")
-
-        print(f"### ComfyUI-Impact-Pack: Updating subpack")
-        try:
-            import git
-        except Exception:
-            if not is_installed('GitPython'):
-                process_wrap(pip_install + ['GitPython'])
-
-        ensure_subpack()  # The installation of the subpack must take place before ensure_pip. cv2 triggers a permission error.
-
-        if os.path.exists(subpack_install_script):
-            process_wrap([sys.executable, 'install.py'], cwd=subpack_path)
-            if not is_requirements_installed(os.path.join(subpack_path, 'requirements.txt')):
-                process_wrap(pip_install + ['-r', 'requirements.txt'], cwd=subpack_path)
-        else:
-            print(f"### ComfyUI-Impact-Pack: (Install Failed) Subpack\nFile not found: `{subpack_install_script}`")
-
-        ensure_pip_packages_first()
-
-        if not impact.config.get_config()['mmdet_skip']:
-            ensure_mmdet_package()
-
-        ensure_pip_packages_last()
-
-        # Download model
-        print("### ComfyUI-Impact-Pack: Check basic models")
-
-        model_path = folder_paths.models_dir
-
-        bbox_path = os.path.join(model_path, "mmdets", "bbox")
-        sam_path = os.path.join(model_path, "sams")
-        onnx_path = os.path.join(model_path, "onnx")
-
-        if not os.path.exists(os.path.join(os.path.dirname(__file__), '..', 'skip_download_model')):
-            if not os.path.exists(bbox_path):
-                os.makedirs(bbox_path)
-
-            if not impact.config.get_config()['mmdet_skip']:
-                if not os.path.exists(os.path.join(bbox_path, "mmdet_anime-face_yolov3.pth")):
-                    download_url("https://huggingface.co/dustysys/ddetailer/resolve/main/mmdet/bbox/mmdet_anime-face_yolov3.pth", bbox_path)
-
-                if not os.path.exists(os.path.join(bbox_path, "mmdet_anime-face_yolov3.py")):
-                    download_url("https://raw.githubusercontent.com/Bing-su/dddetailer/master/config/mmdet_anime-face_yolov3.py", bbox_path)
-
-            if not os.path.exists(os.path.join(sam_path, "sam_vit_b_01ec64.pth")):
-                download_url("https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth", sam_path)
-
-        if not os.path.exists(onnx_path):
-            print(f"### ComfyUI-Impact-Pack: onnx model directory created ({onnx_path})")
-            os.mkdir(onnx_path)
-
-        impact.config.write_config()
+        # subpack_install_script = os.path.join(subpack_path, "install.py")
+        #
+        # print(f"### ComfyUI-Impact-Pack: Updating subpack")
+        # try:
+        #     import git
+        # except Exception:
+        #     if not is_installed('GitPython'):
+        #         process_wrap(pip_install + ['GitPython'])
+        #
+        # ensure_subpack()  # The installation of the subpack must take place before ensure_pip. cv2 triggers a permission error.
+        #
+        # if os.path.exists(subpack_install_script):
+        #     process_wrap([sys.executable, 'install.py'], cwd=subpack_path)
+        #     if not is_requirements_installed(os.path.join(subpack_path, 'requirements.txt')):
+        #         process_wrap(pip_install + ['-r', 'requirements.txt'], cwd=subpack_path)
+        # else:
+        #     print(f"### ComfyUI-Impact-Pack: (Install Failed) Subpack\nFile not found: `{subpack_install_script}`")
+        #
+        # ensure_pip_packages_first()
+        #
+        # if not impact.config.get_config()['mmdet_skip']:
+        #     ensure_mmdet_package()
+        #
+        # ensure_pip_packages_last()
+        #
+        # # Download model
+        # print("### ComfyUI-Impact-Pack: Check basic models")
+        #
+        # model_path = folder_paths.models_dir
+        #
+        # bbox_path = os.path.join(model_path, "mmdets", "bbox")
+        # sam_path = os.path.join(model_path, "sams")
+        # onnx_path = os.path.join(model_path, "onnx")
+        #
+        # if not os.path.exists(os.path.join(os.path.dirname(__file__), '..', 'skip_download_model')):
+        #     if not os.path.exists(bbox_path):
+        #         os.makedirs(bbox_path)
+        #
+        #     if not impact.config.get_config()['mmdet_skip']:
+        #         if not os.path.exists(os.path.join(bbox_path, "mmdet_anime-face_yolov3.pth")):
+        #             download_url("https://huggingface.co/dustysys/ddetailer/resolve/main/mmdet/bbox/mmdet_anime-face_yolov3.pth", bbox_path)
+        #
+        #         if not os.path.exists(os.path.join(bbox_path, "mmdet_anime-face_yolov3.py")):
+        #             download_url("https://raw.githubusercontent.com/Bing-su/dddetailer/master/config/mmdet_anime-face_yolov3.py", bbox_path)
+        #
+        #     if not os.path.exists(os.path.join(sam_path, "sam_vit_b_01ec64.pth")):
+        #         download_url("https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth", sam_path)
+        #
+        # if not os.path.exists(onnx_path):
+        #     print(f"### ComfyUI-Impact-Pack: onnx model directory created ({onnx_path})")
+        #     os.mkdir(onnx_path)
+        #
+        # impact.config.write_config()
 
 
     install()
