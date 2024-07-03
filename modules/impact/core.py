@@ -251,26 +251,24 @@ def enhance_detail(image, model, clip, vae, guide_size, guide_size_for_bbox, max
         print(f"Detailer: segment skip (enough big)")
         return None, None
 
-    # if guide_size_for_bbox:  # == "bbox"
-    #     # Scale up based on the smaller dimension between width and height.
-    #     upscale = guide_size / min(bbox_w, bbox_h)
-    # else:
-    #     # for cropped_size
-    #     upscale = guide_size / min(w, h)
-
-    upscale = guide_size / min(w, h)
+    if guide_size_for_bbox:  # == "bbox"
+        # Scale up based on the smaller dimension between width and height.
+        upscale = guide_size / min(bbox_w, bbox_h)
+    else:
+        # for cropped_size
+        upscale = guide_size / min(w, h)
 
     new_w = int(w * upscale)
     new_h = int(h * upscale)
 
     # safeguard
-    # if 'aitemplate_keep_loaded' in model.model_options:
-    #     max_size = min(4096, max_size)
-    #
-    # if new_w > max_size or new_h > max_size:
-    #     upscale *= max_size / max(new_w, new_h)
-    #     new_w = int(w * upscale)
-    #     new_h = int(h * upscale)
+    if 'aitemplate_keep_loaded' in model.model_options:
+        max_size = min(4096, max_size)
+
+    if new_w > max_size or new_h > max_size:
+        upscale *= max_size / max(new_w, new_h)
+        new_w = int(w * upscale)
+        new_h = int(h * upscale)
 
     if not force_inpaint:
         if upscale <= 1.0:
@@ -595,7 +593,7 @@ def make_sam_mask(sam, segs, image, detection_hint, dilation,
                   threshold, bbox_expansion, mask_hint_threshold, mask_hint_use_negative):
 
     if not hasattr(sam, 'sam_wrapper'):
-        raise Exception("[Impact Pack] Invalid SAMLoader is connected. Make sure 'SAMLoader (Impact)'.")
+        raise Exception("[Impact Pack] Invalid SAMLoader is connected. Make sure 'SAMLoader (Impact)'.\nKnown issue: The ComfyUI-YOLO node overrides the SAMLoader (Impact), making it unusable. You need to uninstall ComfyUI-YOLO.\n\n\n")
 
     sam_obj = sam.sam_wrapper
     sam_obj.prepare_device()
@@ -1205,7 +1203,7 @@ def mask_to_segs(mask, combined, crop_factor, bbox_fill, drop_size=1, label='A',
                         cropped_mask[by1:by2, bx1:bx2] = 1.0
 
                     if cropped_mask is not None:
-                        cropped_mask = utils.to_binary_mask(torch.from_numpy(cropped_mask), 0.1)[0]
+                        cropped_mask = torch.clip(torch.from_numpy(cropped_mask), 0, 1.0)
                         item = SEG(None, cropped_mask.numpy(), 1.0, crop_region, bbox, label, None)
                         result.append(item)
 
